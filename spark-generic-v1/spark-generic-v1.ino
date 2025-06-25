@@ -36,8 +36,16 @@
 #include <Adafruit_AHTX0.h>
 
 #include "arduino_secrets.h"
+#include "espnow_client.h"
 
 Adafruit_AHTX0 aht;
+
+// Define a flag to select communication mode
+#define COMM_MODE_WIFI 0
+#define COMM_MODE_ESPNOW 1
+
+// Select which mode to use
+#define COMMUNICATION_MODE COMM_MODE_ESPNOW
 
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 char ssid[] = SECRET_SSID;    // your network SSID (name)
@@ -56,7 +64,7 @@ String brokerString;
 const char *broker = NULL;
 int port = 1883;
 
-const char topic[]  = "shoulder/left";
+const char topic[]  = "thigh/left";
 
 const long interval = 100;
 unsigned long previousMillis = 0, previousFireMillis = 0;
@@ -68,171 +76,203 @@ unsigned long previousMillis = 0, previousFireMillis = 0;
 #endif
 
 void setup() {
-   int retries = 0;
+  int retries = 0;
+
+  // Initialize serial
+  Serial.begin(115200);
+
+  delay(5000);
+
+  if (! aht.begin()) {
+    Serial.println("Could not find AHT? Check wiring");
+    while (1) {
+      delay(10);
+    }
+  }
+  Serial.println("AHT10 or AHT20 found");
+
+#if COMMUNICATION_MODE == COMM_MODE_WIFI
+  // Original WiFi/MQTT code
+  // attempt to connect to WiFi network:
+  Serial.print("Attempting to connect to WPA SSID: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, pass);
+  while (WiFi.status() != WL_CONNECTED) {
+    // failed, retry
+    Serial.print(".");
+    delay(5000);
+    retries++;
+    if (retries == CONN_RETRY_ATTEMPTS) {
+      Serial.println("Retry timeout.");
+      break;
+    }
+  }
   
-   // Initialize serial
-   Serial.begin(115200);
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
 
-   if (! aht.begin()) {
-      Serial.println("Could not find AHT? Check wiring");
-      while (1) {
-         delay(10);
-      }
-   }
-   Serial.println("AHT10 or AHT20 found");
+  Serial.print("GATEWAY: ");
+  Serial.println(WiFi.gatewayIP());
 
-   // attempt to connect to WiFi network:
-   Serial.print("Attempting to connect to WPA SSID: ");
-   Serial.println(ssid);
-   WiFi.begin(ssid, pass);
-   while (WiFi.status() != WL_CONNECTED) {
-      // failed, retry
-      Serial.print(".");
-      delay(5000);
-      retries++;
-      if (retries == CONN_RETRY_ATTEMPTS) {
-         Serial.println("Retry timeout.");
-         break;
-      }
-   }
-  
-   Serial.println("WiFi connected");
-   Serial.println("IP address: ");
-   Serial.println(WiFi.localIP());
+  brokerString = WiFi.gatewayIP().toString();
+  broker = brokerString.c_str();
 
-   Serial.print("GATEWAY: ");
-   Serial.println(WiFi.gatewayIP());
+  Serial.print("Attempting to connect to the MQTT broker: ");
+  Serial.println(broker);
 
-   // You can provide a unique client ID, if not set the library uses Arduino-millis()
-   // Each client must have a unique client ID
-   // mqttClient.setId("clientId");
+  if (!mqttClient.connect(broker, port)) {
+    Serial.print("MQTT connection failed! Error code = ");
+    Serial.println(mqttClient.connectError());
+  } else {
+    Serial.println("You're connected to the MQTT broker!");
+    Serial.println();
+  }
 
-   // You can provide a username and password for authentication
-   // mqttClient.setUsernamePassword("username", "password");
-
-   brokerString = WiFi.gatewayIP().toString();
-   broker = brokerString.c_str();
-
-   Serial.print("Attempting to connect to the MQTT broker: ");
-   Serial.println(broker);
-
-   if (!mqttClient.connect(broker, port)) {
-      Serial.print("MQTT connection failed! Error code = ");
-      Serial.println(mqttClient.connectError());
-   } else {
-      Serial.println("You're connected to the MQTT broker!");
-      Serial.println();
-   }
-
-   // Serial.print("Subscribing to topic: ");
-   Serial.println(topic);
-   Serial.println();
-
-   // subscribe to a topic
-   // mqttClient.subscribe(topic);
-
-   // topics can be unsubscribed using:
-   // mqttClient.unsubscribe(topic);
-
-   // Serial.print("Waiting for messages on topic: ");
-   // Serial.println(topic);
-   // Serial.println();
+  Serial.println(topic);
+  Serial.println();
+#else
+  // ESP-Now initialization
+  setupESPNowClient(topic); // Use the same topic name for consistency
+#endif
 }
 
 unsigned long previousSendMillis = 0; // will store last time the messages were sent
 const long sendInterval = 5000;       // interval at which to execute code block (milliseconds)
 
 void loop() {
-   static StaticJsonDocument<256> send_doc;
-   static StaticJsonDocument<256> recv_doc;
-   static char input_json[256];
-   static char output_json[256];
-   sensors_event_t humidity, temp;
+#if COMMUNICATION_MODE == COMM_MODE_WIFI
+  static char input_json[256];
+  static StaticJsonDocument<256> recv_doc;
+  static StaticJsonDocument<256> send_doc;
+  static char output_json[256];
+  sensors_event_t humidity, temp;
 
-#if 0
-   // check for incoming messages
-   int messageSize = mqttClient.parseMessage();
+  // check for incoming messages
+  int messageSize = mqttClient.parseMessage();
 
-   if (messageSize) {
-      // we received a message, print out the topic and contents
-      Serial.print("Received a message with topic '");
-      Serial.print(mqttClient.messageTopic());
-      Serial.print("', length ");
-      Serial.print(messageSize);
-      Serial.println(" bytes:");
+  if (messageSize) {
+    // we received a message, print out the topic and contents
+    Serial.print("Received a message with topic '");
+    Serial.print(mqttClient.messageTopic());
+    Serial.print("', length ");
+    Serial.print(messageSize);
+    Serial.println(" bytes:");
 
-      // use the Stream interface to print the contents
-      //while (mqttClient.available()) {
-         //Serial.print((char)mqttClient.read());
-         mqttClient.read((uint8_t *)input_json, 256);
-         Serial.println(input_json);
-         DeserializationError error = deserializeJson(recv_doc, input_json);
-         if (error) {
-            Serial.print(F("deserializeJson() failed: "));
-            Serial.println(error.c_str());
-         } else {
-            const char* device = recv_doc["device"];
-            int value = recv_doc["value"];
-            recv_doc.clear();
-            Serial.print("Device: ");
-            Serial.print(device);
-            Serial.print(" Value: ");
-            Serial.println(value);
-         }
-   //}
-   //}
-   //Serial.println();
+    // use the Stream interface to print the contents
+    //while (mqttClient.available()) {
+       //Serial.print((char)mqttClient.read());
+       mqttClient.read((uint8_t *)input_json, 256);
+       Serial.println(input_json);
+       DeserializationError error = deserializeJson(recv_doc, input_json);
+       if (error) {
+          Serial.print(F("deserializeJson() failed: "));
+          Serial.println(error.c_str());
+       } else {
+          const char* device = recv_doc["device"];
+          int value = recv_doc["value"];
+          recv_doc.clear();
+          Serial.print("Device: ");
+          Serial.print(device);
+          Serial.print(" Value: ");
+          Serial.println(value);
+       }
+  }
 
-   Serial.println();
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousSendMillis >= sendInterval) {
+    previousSendMillis = currentMillis;
+
+    // Read the voltage in millivolts from pin A2
+    uint32_t voltageMilliVolts = analogReadMilliVolts(VOLT_PIN);
+
+    // Convert millivolts to volts for easier reading
+    float voltage = 2 * voltageMilliVolts / 1000.0;
+
+    send_doc["device"] =  topic;
+    send_doc["voltage"] = roundf(voltage * 100) / 100.0;
+    serializeJson(send_doc, output_json, 256);
+    send_doc.clear();
+
+    Serial.print(broker);
+    Serial.print(":");
+    Serial.print(port);
+    Serial.print("/");
+    Serial.println(topic);
+    Serial.println(output_json);
+
+    // send message, the Print interface can be used to set the message contents
+    mqttClient.beginMessage(topic);
+    mqttClient.print(output_json);
+    mqttClient.endMessage();
+
+    /* Get temp from device */
+    aht.getEvent(&humidity, &temp);
+
+    send_doc["device"] =   topic;
+    send_doc["temp"] = roundf(temp.temperature * 100) / 100.0;
+    serializeJson(send_doc, output_json, 256);
+    send_doc.clear();
+
+    Serial.print(broker);
+    Serial.print(":");
+    Serial.print(port);
+    Serial.print("/");
+    Serial.println(topic);
+    Serial.println(output_json);
+
+    // send message, the Print interface can be used to set the message contents
+    mqttClient.beginMessage(topic);
+    mqttClient.print(output_json);
+    mqttClient.endMessage();
+  }
+#else
+  // ESP-Now code
+  static unsigned long previousSendMillis = 0;
+  static StaticJsonDocument<256> send_doc;  // Fixed for your ArduinoJSON version
+  static char output_json[256];
+  sensors_event_t humidity, temp;
+  
+  // Process ESP-Now state machine (handles registration and connection management)
+  loopESPNowClient();
+  
+  unsigned long currentMillis = millis();
+  
+  // Only send data if we're connected to AURA
+  if (isESPNowConnected() && currentMillis - previousSendMillis >= sendInterval) {
+    previousSendMillis = currentMillis;
+    
+    // Read the voltage in millivolts
+    uint32_t voltageMilliVolts = analogReadMilliVolts(VOLT_PIN);
+    
+    // Convert millivolts to volts for easier reading
+    float voltage = 2 * voltageMilliVolts / 1000.0;
+    
+    // Create voltage JSON
+    send_doc["device"] = topic;
+    send_doc["voltage"] = roundf(voltage * 100) / 100.0;
+    serializeJson(send_doc, output_json, 256);
+    
+    // Send via ESP-Now
+    sendESPNowData(output_json);
+    Serial.print("ESP-Now: Sent voltage data: ");
+    Serial.println(output_json);
+    send_doc.clear();
+    
+    // Get temperature data
+    aht.getEvent(&humidity, &temp);
+    
+    // Create temperature JSON
+    send_doc["device"] = topic;
+    send_doc["temp"] = roundf(temp.temperature * 100) / 100.0;
+    serializeJson(send_doc, output_json, 256);
+    
+    // Send via ESP-Now
+    sendESPNowData(output_json);
+    Serial.print("ESP-Now: Sent temperature data: ");
+    Serial.println(output_json);
+    send_doc.clear();
   }
 #endif
-
-   unsigned long currentMillis = millis();
-
-   if (currentMillis - previousSendMillis >= sendInterval) {
-      previousSendMillis = currentMillis;
-
-      // Read the voltage in millivolts from pin A2
-      uint32_t voltageMilliVolts = analogReadMilliVolts(VOLT_PIN);
-
-      // Convert millivolts to volts for easier reading
-      float voltage = 2 * voltageMilliVolts / 1000.0;
-
-      send_doc["device"] =  topic;
-      send_doc["voltage"] = roundf(voltage * 100) / 100.0;
-      serializeJson(send_doc, output_json, 256);
-      send_doc.clear();
-
-      Serial.print(broker);
-      Serial.print(":");
-      Serial.print(port);
-      Serial.print("/");
-      Serial.println(topic);
-      Serial.println(output_json);
-
-      // send message, the Print interface can be used to set the message contents
-      mqttClient.beginMessage(topic);
-      mqttClient.print(output_json);
-      mqttClient.endMessage();
-
-      /* Get temp from device */
-      aht.getEvent(&humidity, &temp);
-
-      send_doc["device"] =   topic;
-      send_doc["temp"] = roundf(temp.temperature * 100) / 100.0;
-      serializeJson(send_doc, output_json, 256);
-      send_doc.clear();
-
-      Serial.print(broker);
-      Serial.print(":");
-      Serial.print(port);
-      Serial.print("/");
-      Serial.println(topic);
-      Serial.println(output_json);
-
-      // send message, the Print interface can be used to set the message contents
-      mqttClient.beginMessage(topic);
-      mqttClient.print(output_json);
-      mqttClient.endMessage();
-   }
 }
