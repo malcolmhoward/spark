@@ -33,7 +33,13 @@ bool topic_rejected = false;
 unsigned long last_reg_time = 0;
 unsigned long last_data_time = 0;
 
-// ESP-Now shared key (must match on all devices)
+/*
+ * ESP-Now shared key (must match on all devices)
+ * NOTE: If you're using this code, change this key.
+ *       1) It would be insecure to keep this key since it's public.
+ *       2) If you don't change it and there's someone else using this code,
+ *          your devices will connect to other systems.
+ */
 static const uint8_t PMK[16] = {
   0x54, 0x68, 0x69, 0x73, 0x49, 0x73, 0x41, 0x53, 
   0x68, 0x61, 0x72, 0x65, 0x64, 0x4B, 0x65, 0x79  /* "ThisIsASharedKey" in hex */
@@ -105,15 +111,26 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
       memset(&peer_info, 0, sizeof(peer_info));
       memcpy(peer_info.peer_addr, mac, 6);
       peer_info.channel = ESPNOW_CHANNEL;
-      
-      // Try with and without encryption
-      esp_now_del_peer(mac);
-      peer_info.encrypt = false;  // Try without encryption first
-      
-      if (esp_now_add_peer(&peer_info) != ESP_OK) {
-        Serial.println("ESP-Now: Failed to add AURA hub as unencrypted peer");
-      } else {
-        Serial.println("ESP-Now: AURA hub added as unencrypted peer successfully");
+      peer_info.encrypt = false; // FIXME: Encryption ot working...
+
+      esp_err_t result = esp_now_add_peer(&peer_info);
+
+      // If encrypted fails, try unencrypted but log detailed error
+      if (result != ESP_OK) {
+        Serial.print("Failed to add encrypted peer, error: ");
+        Serial.println(esp_err_to_name(result));
+
+#ifdef ALLOW_UNENCRYPTED_FALLBACK
+        Serial.println("Falling back to unencrypted communication (SECURITY RISK)");
+        peer_info.encrypt = false;
+        if (esp_now_add_peer(&peer_info) != ESP_OK) {
+          Serial.println("Failed to add peer even without encryption");
+          return;
+        }
+#else
+        Serial.println("Unencrypted fallback disabled, rejecting peer");
+        return;
+#endif
       }
       
       Serial.println("ESP-Now: Now registered and ready to send data");

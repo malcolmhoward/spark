@@ -64,7 +64,7 @@ String brokerString;
 const char *broker = NULL;
 int port = 1883;
 
-const char topic[]  = "thigh/left";
+const char topic[]  = "shoulder/left";
 
 const long interval = 100;
 unsigned long previousMillis = 0, previousFireMillis = 0;
