@@ -22,6 +22,7 @@
  * part of the project and are adopted by the project author(s).
  */
 
+#include "arduino_secrets.h"
 #include "espnow_client.h"
 
 // Global state variables
@@ -41,11 +42,10 @@ const unsigned long REJECTION_RETRY_DELAY = 35000;  // 35 seconds (longer than A
  *       1) It would be insecure to keep this key since it's public.
  *       2) If you don't change it and there's someone else using this code,
  *          your devices will connect to other systems.
+ *
+ * SECRET_PMK is located in the arduino_secrets.h.
  */
-static const uint8_t PMK[16] = {
-  0x54, 0x68, 0x69, 0x73, 0x49, 0x73, 0x41, 0x53, 
-  0x68, 0x61, 0x72, 0x65, 0x64, 0x4B, 0x65, 0x79  /* "ThisIsASharedKey" in hex */
-};
+static const uint8_t PMK[16] = SECRET_PMK;
 
 // ESP-Now broadcast address
 static const uint8_t broadcast_addr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
