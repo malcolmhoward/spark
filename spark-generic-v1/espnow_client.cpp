@@ -392,14 +392,32 @@ unsigned long timeSince(unsigned long start) {
 void loopESPNowClient() {
    // Registration logic
    if (!isESPNowConnected()) {
-      // If we were rejected, wait for timeout period before retrying
-      if (topic_rejected && timeSince(last_rejection_time) > REJECTION_RETRY_DELAY) {
-         Serial.println("ESP-Now: Rejection timeout period passed, retrying registration");
-         topic_rejected = false;  // Clear rejection flag to allow retry
-         last_reg_time = 0;       // Force immediate registration attempt
+      // If we have a cached hub MAC and weren't rejected, try direct connection first
+      if (memcmp(espnow_hub_mac, "\0\0\0\0\0\0", 6) != 0 && !topic_rejected) {
+         static unsigned long last_direct_attempt = 0;
+         if (timeSince(last_direct_attempt) > 5000) {
+            Serial.println("ESP-Now: Attempting direct reconnection to known hub");
+
+            // Try sending registration directly to known MAC
+            espnow_message_t msg;
+            memset(&msg, 0, sizeof(msg));
+            msg.type = ESPNOW_MSG_REGISTRATION;
+            strncpy(msg.topic, espnow_device_topic, sizeof(msg.topic));
+            msg.timestamp = millis();
+            WiFi.macAddress(msg.mac);
+
+            esp_err_t result = esp_now_send(espnow_hub_mac, (uint8_t*)&msg, sizeof(msg));
+            if (result == ESP_OK) {
+               last_reg_time = millis();
+               last_direct_attempt = millis();
+               return;  // Wait for response
+            }
+            // If direct send failed, clear hub MAC and fall back to broadcast
+            memset(espnow_hub_mac, 0, 6);
+         }
       }
 
-      // Try registration if not currently rejected or if rejection timeout has passed
+      // Original broadcast logic for discovery
       if (!topic_rejected && timeSince(last_reg_time) > 5000) {
          sendESPNowRegistration();
       }
