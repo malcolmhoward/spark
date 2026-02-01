@@ -58,10 +58,22 @@ git push origin main
 
 ### Step 4: Create a Feature Branch
 
-**Never work directly on `main`**. Always create a branch:
+**Never work directly on `main`**. Always create a branch.
+
+**First, verify the correct issue number:**
 
 ```bash
-git checkout -b type/description
+# List open issues to find the right issue number
+gh issue list --repo malcolmhoward/spark
+```
+
+**Then create your branch with that issue number:**
+
+```bash
+git checkout -b feat/spark/<issue#>-description
+
+# Example: Working on issue #3
+git checkout -b feat/spark/3-foundation-files
 ```
 
 ---
